@@ -1,30 +1,54 @@
-name: Python CI Test
+name: CVE-2025-32432 Auto Test
 
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-  workflow_dispatch: # لتشغيل الـ workflow يدويًا من واجهة GitHub
+  workflow_dispatch:
 
 jobs:
-  build-and-test:
+  test-rce:
     runs-on: ubuntu-latest
 
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: crafttest
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
     steps:
-    - name: Checkout repository code
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: 3.11
+      - name: Launch Craft CMS Docker
+        run: |
+          docker run -d --name craftdb \
+            -e MYSQL_ROOT_PASSWORD=rootpass \
+            -e MYSQL_DATABASE=crafttest \
+            mysql:8
+          docker run -d --name craftcms \
+            --link craftdb:mysql \
+            -p 8080:80 \
+            -e DB_DRIVER=mysql \
+            -e DB_SERVER=craftdb \
+            -e DB_USER=root \
+            -e DB_PASSWORD=rootpass \
+            -e DB_DATABASE=crafttest \
+            craftcms/cms:5.6.16-apache
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Wait for Craft to start
+        run: sleep 60
 
-    - name: Run tests
-      run: |
-        pytest
+      - name: Install dependencies for PoC
+        run: |
+          pip install -r CVE-2025-32432/requirements.txt
+
+      - name: Run PoC Scanner
+        run: |
+          python3 CVE-2025-32432/craftcms_rce.py -u http://localhost:8080
+
+      - name: Show results
+        run: cat vulnerable.txt || echo "No vulnerabilities detected"
